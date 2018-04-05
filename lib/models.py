@@ -12,7 +12,7 @@ from peewee import IntegerField, CharField, TextField, ForeignKeyField, DecimalF
 import peewee
 import playhouse.signals
 import misc
-import sucrd
+import wantd
 from misc import (printdbg, is_numeric)
 import config
 from bitcoinrpc.authproxy import JSONRPCException
@@ -72,10 +72,10 @@ class GovernanceObject(BaseModel):
     class Meta:
         db_table = 'governance_objects'
 
-    # sync sucrd gobject list with our local relational DB backend
+    # sync wantd gobject list with our local relational DB backend
     @classmethod
-    def sync(self, sucrd):
-        golist = sucrd.rpc_command('gobject', 'list')
+    def sync(self, wantd):
+        golist = wantd.rpc_command('gobject', 'list')
 
         # objects which are removed from the network should be removed from the DB
         try:
@@ -84,7 +84,7 @@ class GovernanceObject(BaseModel):
                 purged.delete_instance(recursive=True, delete_nullable=True)
 
             for item in golist.values():
-                (go, subobj) = self.import_gobject_from_sucrd(sucrd, item)
+                (go, subobj) = self.import_gobject_from_wantd(wantd, item)
         except Exception as e:
             printdbg("Got an error upon import: %s" % e)
 
@@ -96,9 +96,9 @@ class GovernanceObject(BaseModel):
         return query
 
     @classmethod
-    def import_gobject_from_sucrd(self, sucrd, rec):
+    def import_gobject_from_wantd(self, wantd, rec):
         import decimal
-        import sucrlib
+        import wantlib
         import inflection
 
         object_hex = rec['DataHex']
@@ -113,9 +113,9 @@ class GovernanceObject(BaseModel):
             'no_count': rec['NoCount'],
         }
 
-        # shim/sucrd conversion
-        object_hex = sucrlib.SHIM_deserialise_from_sucrd(object_hex)
-        objects = sucrlib.deserialise(object_hex)
+        # shim/wantd conversion
+        object_hex = wantlib.SHIM_deserialise_from_wantd(object_hex)
+        objects = wantlib.deserialise(object_hex)
         subobj = None
 
         obj_type, dikt = objects[0:2:1]
@@ -125,11 +125,11 @@ class GovernanceObject(BaseModel):
         # set object_type in govobj table
         gobj_dict['object_type'] = subclass.govobj_type
 
-        # exclude any invalid model data from sucrd...
+        # exclude any invalid model data from wantd...
         valid_keys = subclass.serialisable_fields()
         subdikt = {k: dikt[k] for k in valid_keys if k in dikt}
 
-        # get/create, then sync vote counts from sucrd, with every run
+        # get/create, then sync vote counts from wantd, with every run
         govobj, created = self.get_or_create(object_hash=object_hash, defaults=gobj_dict)
         if created:
             printdbg("govobj created = %s" % created)
@@ -138,19 +138,19 @@ class GovernanceObject(BaseModel):
             printdbg("govobj updated = %d" % count)
         subdikt['governance_object'] = govobj
 
-        # get/create, then sync payment amounts, etc. from sucrd - Sucred is the master
+        # get/create, then sync payment amounts, etc. from wantd - Wantd is the master
         try:
             newdikt = subdikt.copy()
             newdikt['object_hash'] = object_hash
             if subclass(**newdikt).is_valid() is False:
-                govobj.vote_delete(sucrd)
+                govobj.vote_delete(wantd)
                 return (govobj, None)
 
             subobj, created = subclass.get_or_create(object_hash=object_hash, defaults=subdikt)
         except Exception as e:
             # in this case, vote as delete, and log the vote in the DB
-            printdbg("Got invalid object from sucrd! %s" % e)
-            govobj.vote_delete(sucrd)
+            printdbg("Got invalid object from wantd! %s" % e)
+            govobj.vote_delete(wantd)
             return (govobj, None)
 
         if created:
@@ -162,9 +162,9 @@ class GovernanceObject(BaseModel):
         # ATM, returns a tuple w/gov attributes and the govobj
         return (govobj, subobj)
 
-    def vote_delete(self, sucrd):
+    def vote_delete(self, wantd):
         if not self.voted_on(signal=VoteSignals.delete, outcome=VoteOutcomes.yes):
-            self.vote(sucrd, VoteSignals.delete, VoteOutcomes.yes)
+            self.vote(wantd, VoteSignals.delete, VoteOutcomes.yes)
         return
 
     def get_vote_command(self, signal, outcome):
@@ -172,8 +172,8 @@ class GovernanceObject(BaseModel):
                signal.name, outcome.name]
         return cmd
 
-    def vote(self, sucrd, signal, outcome):
-        import sucrlib
+    def vote(self, wantd, signal, outcome):
+        import wantlib
 
         # At this point, will probably never reach here. But doesn't hurt to
         # have an extra check just in case objects get out of sync (people will
@@ -203,10 +203,10 @@ class GovernanceObject(BaseModel):
 
         vote_command = self.get_vote_command(signal, outcome)
         printdbg(' '.join(vote_command))
-        output = sucrd.rpc_command(*vote_command)
+        output = wantd.rpc_command(*vote_command)
 
         # extract vote output parsing to external lib
-        voted = sucrlib.did_we_vote(output)
+        voted = wantlib.did_we_vote(output)
 
         if voted:
             printdbg('VOTE success, saving Vote object to database')
@@ -214,11 +214,11 @@ class GovernanceObject(BaseModel):
                  object_hash=self.object_hash).save()
         else:
             printdbg('VOTE failed, trying to sync with network vote')
-            self.sync_network_vote(sucrd, signal)
+            self.sync_network_vote(wantd, signal)
 
-    def sync_network_vote(self, sucrd, signal):
+    def sync_network_vote(self, wantd, signal):
         printdbg('\tsyncing network vote for object %s with signal %s' % (self.object_hash, signal.name))
-        vote_info = sucrd.get_my_gobject_votes(self.object_hash)
+        vote_info = wantd.get_my_gobject_votes(self.object_hash)
         for vdikt in vote_info:
             if vdikt['signal'] != signal.name:
                 continue
@@ -274,7 +274,7 @@ class Proposal(GovernanceClass, BaseModel):
         db_table = 'proposals'
 
     def is_valid(self):
-        import sucrlib
+        import wantlib
 
         printdbg("In Proposal#is_valid, for Proposal: %s" % self.__dict__)
 
@@ -304,9 +304,9 @@ class Proposal(GovernanceClass, BaseModel):
                 printdbg("\tProposal amount [%s] is negative or zero, returning False" % self.payment_amount)
                 return False
 
-            # payment address is valid base58 sucr addr, non-multisig
-            if not sucrlib.is_valid_sucr_address(self.payment_address, config.network):
-                printdbg("\tPayment address [%s] not a valid Sucre address for network [%s], returning False" % (self.payment_address, config.network))
+            # payment address is valid base58 want addr, non-multisig
+            if not wantlib.is_valid_want_address(self.payment_address, config.network):
+                printdbg("\tPayment address [%s] not a valid Want address for network [%s], returning False" % (self.payment_address, config.network))
                 return False
 
             # URL
@@ -329,7 +329,7 @@ class Proposal(GovernanceClass, BaseModel):
 
     def is_expired(self, superblockcycle=None):
         from constants import SUPERBLOCK_FUDGE_WINDOW
-        import sucrlib
+        import wantlib
 
         if not superblockcycle:
             raise Exception("Required field superblockcycle missing.")
@@ -341,7 +341,7 @@ class Proposal(GovernanceClass, BaseModel):
         # half the SB cycle, converted to seconds
         # add the fudge_window in seconds, defined elsewhere in Sentinel
         expiration_window_seconds = int(
-            (sucrlib.blocks_to_seconds(superblockcycle) / 2) +
+            (wantlib.blocks_to_seconds(superblockcycle) / 2) +
             SUPERBLOCK_FUDGE_WINDOW
         )
         printdbg("\texpiration_window_seconds = %s" % expiration_window_seconds)
@@ -364,7 +364,7 @@ class Proposal(GovernanceClass, BaseModel):
         if (self.end_epoch < (misc.now() - thirty_days)):
             return True
 
-        # TBD (item moved to external storage/SucreDrive, etc.)
+        # TBD (item moved to external storage/WantDrive, etc.)
         return False
 
     @classmethod
@@ -409,17 +409,17 @@ class Proposal(GovernanceClass, BaseModel):
             return rank
 
     def get_prepare_command(self):
-        import sucrlib
-        obj_data = sucrlib.SHIM_serialise_for_sucrd(self.serialise())
+        import wantlib
+        obj_data = wantlib.SHIM_serialise_for_wantd(self.serialise())
 
         # new superblocks won't have parent_hash, revision, etc...
         cmd = ['gobject', 'prepare', '0', '1', str(int(time.time())), obj_data]
 
         return cmd
 
-    def prepare(self, sucrd):
+    def prepare(self, wantd):
         try:
-            object_hash = sucrd.rpc_command(*self.get_prepare_command())
+            object_hash = wantd.rpc_command(*self.get_prepare_command())
             printdbg("Submitted: [%s]" % object_hash)
             self.go.object_fee_tx = object_hash
             self.go.save()
@@ -447,7 +447,7 @@ class Superblock(BaseModel, GovernanceClass):
         db_table = 'superblocks'
 
     def is_valid(self):
-        import sucrlib
+        import wantlib
         import decimal
 
         printdbg("In Superblock#is_valid, for SB: %s" % self.__dict__)
@@ -455,7 +455,7 @@ class Superblock(BaseModel, GovernanceClass):
         # it's a string from the DB...
         addresses = self.payment_addresses.split('|')
         for addr in addresses:
-            if not sucrlib.is_valid_sucr_address(addr, config.network):
+            if not wantlib.is_valid_want_address(addr, config.network):
                 printdbg("\tInvalid address [%s], returning False" % addr)
                 return False
 
@@ -489,12 +489,12 @@ class Superblock(BaseModel, GovernanceClass):
 
     def is_deletable(self):
         # end_date < (current_date - 30 days)
-        # TBD (item moved to external storage/SucreDrive, etc.)
+        # TBD (item moved to external storage/WantDrive, etc.)
         pass
 
     def hash(self):
-        import sucrlib
-        return sucrlib.hashit(self.serialise())
+        import wantlib
+        return wantlib.hashit(self.serialise())
 
     def hex_hash(self):
         return "%x" % self.hash()
@@ -604,33 +604,33 @@ class Watchdog(BaseModel, GovernanceClass):
     only_masternode_can_submit = True
 
     @classmethod
-    def active(self, sucrd):
+    def active(self, wantd):
         now = int(time.time())
         resultset = self.select().where(
-            self.created_at >= (now - sucrd.SENTINEL_WATCHDOG_MAX_SECONDS)
+            self.created_at >= (now - wantd.SENTINEL_WATCHDOG_MAX_SECONDS)
         )
         return resultset
 
     @classmethod
-    def expired(self, sucrd):
+    def expired(self, wantd):
         now = int(time.time())
         resultset = self.select().where(
-            self.created_at < (now - sucrd.SENTINEL_WATCHDOG_MAX_SECONDS)
+            self.created_at < (now - wantd.SENTINEL_WATCHDOG_MAX_SECONDS)
         )
         return resultset
 
-    def is_expired(self, sucrd):
+    def is_expired(self, wantd):
         now = int(time.time())
-        return (self.created_at < (now - sucrd.SENTINEL_WATCHDOG_MAX_SECONDS))
+        return (self.created_at < (now - wantd.SENTINEL_WATCHDOG_MAX_SECONDS))
 
-    def is_valid(self, sucrd):
-        if self.is_expired(sucrd):
+    def is_valid(self, wantd):
+        if self.is_expired(wantd):
             return False
 
         return True
 
-    def is_deletable(self, sucrd):
-        if self.is_expired(sucrd):
+    def is_deletable(self, wantd):
+        if self.is_expired(wantd):
             return True
 
         return False

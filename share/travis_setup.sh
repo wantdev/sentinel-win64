@@ -1,9 +1,9 @@
 #!/bin/bash
 set -evx
 
-mkdir ~/.sucrcore
+mkdir ~/.wantcore
 
 # safety check
-if [ ! -f ~/.sucrcore/.sucr.conf ]; then
-  cp share/sucr.conf.example ~/.sucrcore/sucr.conf
+if [ ! -f ~/.wantcore/.want.conf ]; then
+  cp share/want.conf.example ~/.wantcore/want.conf
 fi

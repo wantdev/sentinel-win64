@@ -7,11 +7,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
 from misc import printdbg
 
 
-class SucreConfig():
+class WantConfig():
 
     @classmethod
     def slurp_config_file(self, filename):
-        # read sucr.conf config but skip commented lines
+        # read want.conf config but skip commented lines
         f = io.open(filename)
         lines = []
         for line in f:
@@ -20,14 +20,14 @@ class SucreConfig():
             lines.append(line)
         f.close()
 
-        # data is sucr.conf without commented lines
+        # data is want.conf without commented lines
         data = ''.join(lines)
 
         return data
 
     @classmethod
     def get_rpc_creds(self, data, network='mainnet'):
-        # get rpc info from sucr.conf
+        # get rpc info from want.conf
         match = re.findall(r'rpc(user|password|port)=(.*?)$', data, re.MULTILINE)
 
         # python >= 2.7
@@ -40,14 +40,14 @@ class SucreConfig():
         if args.rpc_port:
             creds[u'port'] = args.rpc_port
         else:
-            # standard Sucre defaults...
-            default_port = 9335 if (network == 'mainnet') else 19335
+            # standard Want defaults...
+            default_port = 11225 if (network == 'mainnet') else 11235
 
-            # use default port for network if not specified in sucr.conf
+            # use default port for network if not specified in want.conf
             if not ('port' in creds):
                 creds[u'port'] = default_port
 
-            # convert to an int if taken from sucr.conf
+            # convert to an int if taken from want.conf
             creds[u'port'] = int(creds[u'port'])
 
         # return a dictionary with RPC credential key, value pairs

@@ -4,7 +4,7 @@
 import argparse
 import sys
 import os
-from sucr_config import SucreConfig
+from want_config import WantConfig
 
 
 default_sentinel_config = os.path.normpath(
@@ -17,9 +17,9 @@ if not os.path.isfile(default_sentinel_config):
 
 sentinel_config_file = os.environ.get('SENTINEL_CONFIG', default_sentinel_config)
 
-sentinel_cfg = SucreConfig.tokenize(sentinel_config_file)
+sentinel_cfg = WantConfig.tokenize(sentinel_config_file)
 sentinel_version = "1.1.0"
-min_sucrd_proto_version_with_sentinel_ping = 70207
+min_wantd_proto_version_with_sentinel_ping = 70207
 
 
 def get_argarse():
@@ -42,28 +42,28 @@ def get_args():
 
     return args
 
-def get_sucr_conf():
+def get_want_conf():
     args = get_args()
 
     if args.config:
-        sucr_conf = args.config
+        want_conf = args.config
     else:
         home = os.environ.get('HOME')
         if home is not None:
             if sys.platform == 'darwin':
-                sucr_conf = os.path.join(home, "Library/Application Support/SucreCore/sucr.conf")
+                want_conf = os.path.join(home, "Library/Application Support/WantCore/want.conf")
             else:
-                sucr_conf = os.path.join(home, ".sucrcore/sucr.conf")
+                want_conf = os.path.join(home, ".wantcore/want.conf")
         else:
             home = os.getenv('APPDATA')
             if home is not None:
-                sucr_conf = os.path.join(home, "sucrcore\\sucr.conf")
+                want_conf = os.path.join(home, "wantcore\\want.conf")
             else:
-                sucr_conf = 'sucr.conf'
+                want_conf = 'want.conf'
         
-        sucr_conf = sentinel_cfg.get('sucr_conf', sucr_conf)
+        want_conf = sentinel_cfg.get('want_conf', want_conf)
 
-    return sucr_conf
+    return want_conf
 
 
 def get_network():
@@ -119,6 +119,6 @@ def get_db_conn():
     return db
 
 
-sucr_conf = get_sucr_conf()
+want_conf = get_want_conf()
 network = get_network()
 db = get_db_conn()

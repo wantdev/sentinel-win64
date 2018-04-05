@@ -58,23 +58,23 @@ def is_database_correctly_configured():
     return configured
 
 
-def has_sucr_conf():
+def has_want_conf():
     import config
     import io
 
-    valid_sucr_conf = False
+    valid_want_conf = False
 
-    # ensure sucr_conf exists & readable
+    # ensure want_conf exists & readable
     #
-    # if not, print a message stating that Sucre Core must be installed and
-    # configured, including JSONRPC access in sucr.conf
+    # if not, print a message stating that Want Core must be installed and
+    # configured, including JSONRPC access in want.conf
     try:
-        f = io.open(config.sucr_conf)
-        valid_sucr_conf = True
+        f = io.open(config.want_conf)
+        valid_want_conf = True
     except IOError as e:
         print(e)
 
-    return valid_sucr_conf
+    return valid_want_conf
 
 
 # === begin main
@@ -102,8 +102,8 @@ def main():
         input('Press [ENTER] to exit')
         sys.exit(1)
 
-    if not has_sucr_conf():
-        print("SucreCore must be installed and configured, including JSONRPC access in sucr.conf")
+    if not has_want_conf():
+        print("WantCore must be installed and configured, including JSONRPC access in want.conf")
         
         input('Press [ENTER] to exit')
         sys.exit(1)

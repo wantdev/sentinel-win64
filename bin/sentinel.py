@@ -5,7 +5,7 @@ sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), '../lib
 import init
 import config
 import misc
-from sucrd import SucreDaemon
+from wantd import WantDaemon
 from models import Superblock, Proposal, GovernanceObject, Watchdog
 from models import VoteSignals, VoteOutcomes, Transient
 import socket
@@ -19,22 +19,22 @@ from scheduler import Scheduler
 import argparse
 from termcolor import colored
 
-# sync sucrd gobject list with our local relational DB backend
-def perform_sucrd_object_sync(sucrd):
-    GovernanceObject.sync(sucrd)
+# sync wantd gobject list with our local relational DB backend
+def perform_wantd_object_sync(wantd):
+    GovernanceObject.sync(wantd)
 
 
 # delete old watchdog objects, create new when necessary
-def watchdog_check(sucrd):
+def watchdog_check(wantd):
     printdbg("in watchdog_check")
 
     # delete expired watchdogs
-    for wd in Watchdog.expired(sucrd):
+    for wd in Watchdog.expired(wantd):
         printdbg("\tFound expired watchdog [%s], voting to delete" % wd.object_hash)
-        wd.vote(sucrd, VoteSignals.delete, VoteOutcomes.yes)
+        wd.vote(wantd, VoteSignals.delete, VoteOutcomes.yes)
 
     # now, get all the active ones...
-    active_wd = Watchdog.active(sucrd)
+    active_wd = Watchdog.active(wantd)
     active_count = active_wd.count()
 
     # none exist, submit a new one to the network
@@ -42,7 +42,7 @@ def watchdog_check(sucrd):
         # create/submit one
         printdbg("\tNo watchdogs exist... submitting new one.")
         wd = Watchdog(created_at=int(time.time()))
-        wd.submit(sucrd)
+        wd.submit(wantd)
 
     else:
         wd_list = sorted(active_wd, key=lambda wd: wd.object_hash)
@@ -50,35 +50,35 @@ def watchdog_check(sucrd):
         # highest hash wins
         winner = wd_list.pop()
         printdbg("\tFound winning watchdog [%s], voting VALID" % winner.object_hash)
-        winner.vote(sucrd, VoteSignals.valid, VoteOutcomes.yes)
+        winner.vote(wantd, VoteSignals.valid, VoteOutcomes.yes)
 
         # if remaining Watchdogs exist in the list, vote delete
         for wd in wd_list:
             printdbg("\tFound losing watchdog [%s], voting DELETE" % wd.object_hash)
-            wd.vote(sucrd, VoteSignals.delete, VoteOutcomes.yes)
+            wd.vote(wantd, VoteSignals.delete, VoteOutcomes.yes)
 
     printdbg("leaving watchdog_check")
 
 
-def prune_expired_proposals(sucrd):
+def prune_expired_proposals(wantd):
     # vote delete for old proposals
-    for proposal in Proposal.expired(sucrd.superblockcycle()):
-        proposal.vote(sucrd, VoteSignals.delete, VoteOutcomes.yes)
+    for proposal in Proposal.expired(wantd.superblockcycle()):
+        proposal.vote(wantd, VoteSignals.delete, VoteOutcomes.yes)
 
 
-# ping sucrd
-def sentinel_ping(sucrd):
+# ping wantd
+def sentinel_ping(wantd):
     printdbg("in sentinel_ping")
 
-    sucrd.ping()
+    wantd.ping()
 
     printdbg("leaving sentinel_ping")
 
 
-def attempt_superblock_creation(sucrd):
-    import sucrlib
+def attempt_superblock_creation(wantd):
+    import wantlib
 
-    if not sucrd.is_masternode():
+    if not wantd.is_masternode():
         print("We are not a Masternode... can't submit superblocks!")
         return
 
@@ -89,7 +89,7 @@ def attempt_superblock_creation(sucrd):
     # has this masternode voted on *any* superblocks at the given event_block_height?
     # have we voted FUNDING=YES for a superblock for this specific event_block_height?
 
-    event_block_height = sucrd.next_superblock_height()
+    event_block_height = wantd.next_superblock_height()
 
     if Superblock.is_voted_funding(event_block_height):
         # printdbg("ALREADY VOTED! 'til next time!")
@@ -97,20 +97,20 @@ def attempt_superblock_creation(sucrd):
         # vote down any new SBs because we've already chosen a winner
         for sb in Superblock.at_height(event_block_height):
             if not sb.voted_on(signal=VoteSignals.funding):
-                sb.vote(sucrd, VoteSignals.funding, VoteOutcomes.no)
+                sb.vote(wantd, VoteSignals.funding, VoteOutcomes.no)
 
         # now return, we're done
         return
 
-    if not sucrd.is_govobj_maturity_phase():
+    if not wantd.is_govobj_maturity_phase():
         printdbg("Not in maturity phase yet -- will not attempt Superblock")
         return
 
-    proposals = Proposal.approved_and_ranked(proposal_quorum=sucrd.governance_quorum(), next_superblock_max_budget=sucrd.next_superblock_max_budget())
-    budget_max = sucrd.get_superblock_budget_allocation(event_block_height)
-    sb_epoch_time = sucrd.block_height_to_epoch(event_block_height)
+    proposals = Proposal.approved_and_ranked(proposal_quorum=wantd.governance_quorum(), next_superblock_max_budget=wantd.next_superblock_max_budget())
+    budget_max = wantd.get_superblock_budget_allocation(event_block_height)
+    sb_epoch_time = wantd.block_height_to_epoch(event_block_height)
 
-    sb = sucrlib.create_superblock(proposals, event_block_height, budget_max, sb_epoch_time)
+    sb = wantlib.create_superblock(proposals, event_block_height, budget_max, sb_epoch_time)
     if not sb:
         printdbg("No superblock created, sorry. Returning.")
         return
@@ -118,12 +118,12 @@ def attempt_superblock_creation(sucrd):
     # find the deterministic SB w/highest object_hash in the DB
     dbrec = Superblock.find_highest_deterministic(sb.hex_hash())
     if dbrec:
-        dbrec.vote(sucrd, VoteSignals.funding, VoteOutcomes.yes)
+        dbrec.vote(wantd, VoteSignals.funding, VoteOutcomes.yes)
 
         # any other blocks which match the sb_hash are duplicates, delete them
         for sb in Superblock.select().where(Superblock.sb_hash == sb.hex_hash()):
             if not sb.voted_on(signal=VoteSignals.funding):
-                sb.vote(sucrd, VoteSignals.delete, VoteOutcomes.yes)
+                sb.vote(wantd, VoteSignals.delete, VoteOutcomes.yes)
 
         printdbg("VOTED FUNDING FOR SB! We're done here 'til next superblock cycle.")
         return
@@ -131,24 +131,24 @@ def attempt_superblock_creation(sucrd):
         printdbg("The correct superblock wasn't found on the network...")
 
     # if we are the elected masternode...
-    if (sucrd.we_are_the_winner()):
+    if (wantd.we_are_the_winner()):
         printdbg("we are the winner! Submit SB to network")
-        sb.submit(sucrd)
+        sb.submit(wantd)
 
 
-def check_object_validity(sucrd):
+def check_object_validity(wantd):
     # vote (in)valid objects
     for gov_class in [Proposal, Superblock]:
         for obj in gov_class.select():
-            obj.vote_validity(sucrd)
+            obj.vote_validity(wantd)
 
 
-def is_sucrd_port_open(sucrd):
+def is_wantd_port_open(wantd):
     # test socket open before beginning, display instructive message to MN
     # operators if it's not
     port_open = False
     try:
-        info = sucrd.rpc_command('getgovernanceinfo')
+        info = wantd.rpc_command('getgovernanceinfo')
         port_open = True
     except (socket.error, JSONRPCException) as e:
         print("%s" % e)
@@ -157,21 +157,21 @@ def is_sucrd_port_open(sucrd):
 
 
 def main():
-    sucrd = SucreDaemon.from_sucr_conf(config.sucr_conf)
+    wantd = WantDaemon.from_want_conf(config.want_conf)
     options = process_args()
 
-    # check sucrd connectivity
-    if not is_sucrd_port_open(sucrd):
-        print(colored("Cannot connect to sucrd. Please ensure sucrd is running and the JSONRPC port is open to Sentinel.", 'red'))
+    # check wantd connectivity
+    if not is_wantd_port_open(wantd):
+        print(colored("Cannot connect to wantd. Please ensure wantd is running and the JSONRPC port is open to Sentinel.", 'red'))
         return
 
-    # check sucrd sync
-    if not sucrd.is_synced():
-        print(colored("sucrd not synced with network! Awaiting full sync before running Sentinel.", 'yellow'))
+    # check wantd sync
+    if not wantd.is_synced():
+        print(colored("wantd not synced with network! Awaiting full sync before running Sentinel.", 'yellow'))
         return
 
     # ensure valid masternode
-    if not sucrd.is_masternode():
+    if not wantd.is_masternode():
         print(colored('yellow', "Invalid Masternode Status, cannot continue."))
         return
 
@@ -203,22 +203,22 @@ def main():
     # ========================================================================
     #
     # load "gobject list" rpc command data, sync objects into internal database
-    perform_sucrd_object_sync(sucrd)
+    perform_wantd_object_sync(wantd)
 
-    if sucrd.has_sentinel_ping:
-        sentinel_ping(sucrd)
+    if wantd.has_sentinel_ping:
+        sentinel_ping(wantd)
     else:
         # delete old watchdog objects, create a new if necessary
-        watchdog_check(sucrd)
+        watchdog_check(wantd)
 
     # auto vote network objects as valid/invalid
-    # check_object_validity(sucrd)
+    # check_object_validity(wantd)
 
     # vote to delete expired proposals
-    prune_expired_proposals(sucrd)
+    prune_expired_proposals(wantd)
 
     # create a Superblock if necessary
-    attempt_superblock_creation(sucrd)
+    attempt_superblock_creation(wantd)
 
     # schedule the next run
     Scheduler.schedule_next_run()
@@ -248,7 +248,7 @@ def process_args():
 def entrypoint():
     # ensure another instance of Sentinel pointing at the same config
     # is not currently running
-    mutex_key = 'SENTINEL_RUNNING_' + config.sucr_conf
+    mutex_key = 'SENTINEL_RUNNING_' + config.want_conf
 
     atexit.register(cleanup, mutex_key)
     signal.signal(signal.SIGINT, signal_handler)
